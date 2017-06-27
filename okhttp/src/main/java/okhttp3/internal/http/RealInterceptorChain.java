@@ -17,11 +17,13 @@ package okhttp3.internal.http;
 
 import java.io.IOException;
 import java.util.List;
+import okhttp3.Call;
 import okhttp3.Connection;
-import okhttp3.HttpUrl;
+import okhttp3.EventListener;
 import okhttp3.Interceptor;
 import okhttp3.Request;
 import okhttp3.Response;
+import okhttp3.internal.connection.RealConnection;
 import okhttp3.internal.connection.StreamAllocation;
 
 /**
@@ -32,19 +34,24 @@ public final class RealInterceptorChain implements Interceptor.Chain {
   private final List<Interceptor> interceptors;
   private final StreamAllocation streamAllocation;
   private final HttpCodec httpCodec;
-  private final Connection connection;
+  private final RealConnection connection;
   private final int index;
   private final Request request;
+  private final Call call;
+  private final EventListener eventListener;
   private int calls;
 
   public RealInterceptorChain(List<Interceptor> interceptors, StreamAllocation streamAllocation,
-      HttpCodec httpCodec, Connection connection, int index, Request request) {
+      HttpCodec httpCodec, RealConnection connection, int index, Request request, Call call,
+      EventListener eventListener) {
     this.interceptors = interceptors;
     this.connection = connection;
     this.streamAllocation = streamAllocation;
     this.httpCodec = httpCodec;
     this.index = index;
     this.request = request;
+    this.call = call;
+    this.eventListener = eventListener;
   }
 
   @Override public Connection connection() {
@@ -59,6 +66,14 @@ public final class RealInterceptorChain implements Interceptor.Chain {
     return httpCodec;
   }
 
+  public Call call() {
+    return call;
+  }
+
+  public EventListener eventListener() {
+    return eventListener;
+  }
+
   @Override public Request request() {
     return request;
   }
@@ -68,13 +83,13 @@ public final class RealInterceptorChain implements Interceptor.Chain {
   }
 
   public Response proceed(Request request, StreamAllocation streamAllocation, HttpCodec httpCodec,
-      Connection connection) throws IOException {
+      RealConnection connection) throws IOException {
     if (index >= interceptors.size()) throw new AssertionError();
 
     calls++;
 
     // If we already have a stream, confirm that the incoming request will use it.
-    if (this.httpCodec != null && !sameConnection(request.url())) {
+    if (this.httpCodec != null && !this.connection.supportsUrl(request.url())) {
       throw new IllegalStateException("network interceptor " + interceptors.get(index - 1)
           + " must retain the same host and port");
     }
@@ -86,8 +101,8 @@ public final class RealInterceptorChain implements Interceptor.Chain {
     }
 
     // Call the next interceptor in the chain.
-    RealInterceptorChain next = new RealInterceptorChain(
-        interceptors, streamAllocation, httpCodec, connection, index + 1, request);
+    RealInterceptorChain next = new RealInterceptorChain(interceptors, streamAllocation, httpCodec,
+        connection, index + 1, request, call, eventListener);
     Interceptor interceptor = interceptors.get(index);
     Response response = interceptor.intercept(next);
 
@@ -102,11 +117,11 @@ public final class RealInterceptorChain implements Interceptor.Chain {
       throw new NullPointerException("interceptor " + interceptor + " returned null");
     }
 
-    return response;
-  }
+    if (response.body() == null) {
+      throw new IllegalStateException(
+          "interceptor " + interceptor + " returned a response with no body");
+    }
 
-  private boolean sameConnection(HttpUrl url) {
-    return url.host().equals(connection.route().address().url().host())
-        && url.port() == connection.route().address().url().port();
+    return response;
   }
 }

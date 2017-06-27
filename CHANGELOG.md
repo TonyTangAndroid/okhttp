@@ -1,6 +1,177 @@
 Change Log
 ==========
 
+## Version 3.8.1
+
+_2017-06-18_
+
+ *  Fix: Recover gracefully from stale coalesced connections. We had a bug where
+    connection coalescing (introduced in OkHttp 3.7.0) and stale connection
+    recovery could interact to cause a `NoSuchElementException` crash in the
+    `RouteSelector`.
+
+
+## Version 3.8.0
+
+_2017-05-13_
+
+
+ *  **OkHttp now uses `@Nullable` to annotate all possibly-null values.** We've
+    added a compile-time dependency on the JSR 305 annotations. This is a
+    [provided][maven_provided] dependency and does not need to be included in
+    your build configuration, `.jar` file, or `.apk`. We use
+    `@ParametersAreNonnullByDefault` and all parameters and return types are
+    never null unless explicitly annotated `@Nullable`.
+
+ *  **Warning: this release is source-incompatible for Kotlin users.**
+    Nullability was previously ambiguous and lenient but now the compiler will
+    enforce strict null checks.
+
+ *  New: The response message is now non-null. This is the "Not Found" in the
+    status line "HTTP 404 Not Found". If you are building responses
+    programmatically (with `new Response.Builder()`) you must now always supply
+    a message. An empty string `""` is permitted. This value was never null on
+    responses returned by OkHttp itself, and it was an old mistake to permit
+    application code to omit a message.
+
+ *  The challenge's scheme and realm are now non-null. If you are calling
+    `new Challenge(scheme, realm)` you must provide non-null values. These were
+    never null in challenges created by OkHttp, but could have been null in
+    application code that creates challenges.
+
+ *  New: The `TlsVersion` of a `Handshake` is now non-null. If you are calling
+    `Handshake.get()` with a null TLS version, you must instead now provide a
+    non-null `TlsVersion`. Cache responses persisted prior to OkHttp 3.0 did not
+    store a TLS version; for these unknown values the handshake is defaulted to
+    `TlsVersion.SSL_3_0`.
+
+ *  New: Upgrade to Okio 1.13.0.
+
+     ```xml
+     <dependency>
+       <groupId>com.squareup.okio</groupId>
+       <artifactId>okio</artifactId>
+       <version>1.13.0</version>
+     </dependency>
+
+     com.squareup.okio:okio:1.13.0
+     ```
+
+ *  Fix: gracefully recover when Android 7.0's sockets throw an unexpected
+    `NullPointerException`.
+
+## Version 3.7.0
+
+_2017-04-15_
+
+ *  **OkHttp no longer recovers from TLS handshake failures by attempting a TLSv1 connection.**
+    The fallback was necessary for servers that implemented version negotiation incorrectly. Now
+    that 99.99% of servers do it right this fallback is obsolete.
+ *  Fix: Do not honor cookies set on a public domain. Previously a malicious site could inject
+    cookies on top-level domains like `co.uk` because our cookie parser didn't honor the [public
+    suffix][public_suffix] list. Alongside this fix is a new API, `HttpUrl.topPrivateDomain()`,
+    which returns the privately domain name if the URL has one.
+ *  Fix: Change `MediaType.charset()` to return null for unexpected charsets.
+ *  Fix: Don't skip cache invalidation if the invalidating response has no body.
+ *  Fix: Don't use a cryptographic random number generator for web sockets. Some Android devices
+    implement `SecureRandom` incorrectly!
+ *  Fix: Correctly canonicalize IPv6 addresses in `HttpUrl`. This prevented OkHttp from trusting
+    HTTPS certificates issued to certain IPv6 addresses.
+ *  Fix: Don't reuse connections after an unsuccessful `Expect: 100-continue`.
+ *  Fix: Handle either `TLS_` or `SSL_` prefixes for cipher suite names. This is necessary for
+    IBM JVMs that use the `SSL_` prefix exclusively.
+ *  Fix: Reject HTTP/2 data frames if the stream ID is 0.
+ *  New: Upgrade to Okio 1.12.0.
+
+     ```xml
+     <dependency>
+       <groupId>com.squareup.okio</groupId>
+       <artifactId>okio</artifactId>
+       <version>1.12.0</version>
+     </dependency>
+
+     com.squareup.okio:okio:1.12.0
+     ```
+
+ *  New: Connection coalescing. OkHttp may reuse HTTP/2 connections across calls that share an IP
+    address and HTTPS certificate, even if their domain names are different.
+ *  New: MockWebServer's `RecordedRequest` exposes the requested `HttpUrl` with `getRequestUrl()`.
+
+
+## Version 3.6.0
+
+_2017-01-29_
+
+ *  Fix: Don't crash with a "cache is closed" error when there is an error initializing the cache.
+ *  Fix: Calling `disconnect()` on a connecting `HttpUrlConnection` could cause it to retry in an
+    infinite loop! This regression was introduced in OkHttp 2.7.0.
+ *  Fix: Drop cookies that contain ASCII NULL and other bad characters. Previously such cookies
+    would cause OkHttp to crash when they were included in a request.
+ *  Fix: Release duplicated multiplexed connections. If we concurrently establish connections to an
+    HTTP/2 server, close all but the first connection.
+ *  Fix: Fail the HTTP/2 connection if first frame isn't `SETTINGS`.
+ *  Fix: Forbid spaces in header names.
+ *  Fix: Don't offer to do gzip if the request is partial.
+ *  Fix: MockWebServer is now usable with JUnit 5. That update [broke the rules][junit_5_rules].
+ *  New: Support `Expect: 100-continue` as a request header. Callers can use this header to
+    pessimistically hold off on transmitting a request body until a server gives the go-ahead.
+ *  New: Permit network interceptors to rewrite the host header for HTTP/2. This makes it possible
+    to do domain fronting.
+ *  New: charset support for `Credentials.basic()`.
+
+
+## Version 3.5.0
+
+_2016-11-30_
+
+ *  **Web Sockets are now a stable feature of OkHttp.** Since being introduced as a beta feature in
+    OkHttp 2.3 our web socket client has matured. Connect to a server's web socket with
+    `OkHttpClient.newWebSocket()`, send messages with `send()`, and receive messages with the
+    `WebSocketListener`.
+
+    The `okhttp-ws` submodule is no longer available and `okhttp-ws` artifacts from previous
+    releases of OkHttp are not compatible with OkHttp 3.5. When upgrading to the new package
+    please note that the `WebSocket` and `WebSocketCall` classes have been merged. Sending messages
+    is now asynchronous and they may be enqueued before the web socket is connected.
+
+ *  **OkHttp no longer attempts a direct connection if the system's HTTP proxy fails.** This
+    behavior was surprising because OkHttp was disregarding the user's specified configuration. If
+    you need to customize proxy fallback behavior, implement your own `java.net.ProxySelector`.
+
+ *  Fix: Support TLSv1.3 on devices that support it.
+
+ *  Fix: Share pooled connections across equivalent `OkHttpClient` instances. Previous releases had
+    a bug where a shared connection pool did not guarantee shared connections in some cases.
+ *  Fix: Prefer the server's response body on all conditional cache misses. Previously we would
+    return the cached response's body if it had a newer `Last-Modified` date.
+ *  Fix: Update the stored timestamp on conditional cache hits.
+ *  New: Optimized HTTP/2 request header encoding. More headers are HPACK-encoded and string
+    literals are now Huffman-encoded.
+ *  New: Expose `Part` headers and body in `Multipart`.
+ *  New: Make `ResponseBody.string()` and `ResponseBody.charStream()` BOM-aware. If your HTTP
+    response body begins with a [byte order mark][bom] it will be consumed and used to select a
+    charset for the remaining bytes. Most applications should not need a byte order mark.
+
+ *  New: Upgrade to Okio 1.11.0.
+
+     ```xml
+     <dependency>
+       <groupId>com.squareup.okio</groupId>
+       <artifactId>okio</artifactId>
+       <version>1.11.0</version>
+     </dependency>
+
+     com.squareup.okio:okio:1.11.0
+     ```
+
+ *  Fix: Avoid sending empty HTTP/2 data frames when there is no request body.
+ *  Fix: Add a leading `.` for better domain matching in `JavaNetCookieJar`.
+ *  Fix: Gracefully recover from HTTP/2 connection shutdowns at start of request.
+ *  Fix: Be lenient if a `MediaType`'s character set is `'single-quoted'`.
+ *  Fix: Allow horizontal tab characters in header values.
+ *  Fix: When parsing HTTP authentication headers permit challenge parameters in any order.
+
+
 ## Version 3.4.2
 
 _2016-11-03_
@@ -680,7 +851,7 @@ _2014-12-30_
  *  New: APIs to iterate and selectively clear the response cache.
  *  New: Support for SOCKS proxies.
  *  New: Support for `TLS_FALLBACK_SCSV`.
- *  New: Update HTTP/2 support to to `h2-16` and `hpack-10`.
+ *  New: Update HTTP/2 support to `h2-16` and `hpack-10`.
  *  New: APIs to prevent retrying non-idempotent requests.
  *  Fix: Drop NPN support. Going forward we support ALPN only.
  *  Fix: The hostname verifier is now strict. This is consistent with the hostname
@@ -1146,3 +1317,7 @@ Initial release.
  [major_versions]: http://jakewharton.com/java-interoperability-policy-for-major-version-updates/
  [nginx_959]: https://trac.nginx.org/nginx/ticket/959
  [okhttp_idling_resource]: https://github.com/JakeWharton/okhttp-idling-resource
+ [bom]: https://en.wikipedia.org/wiki/Byte_order_mark
+ [junit_5_rules]: http://junit.org/junit5/docs/current/user-guide/#migrating-from-junit4-rulesupport
+ [public_suffix]: https://publicsuffix.org/
+ [maven_provided]: https://maven.apache.org/guides/introduction/introduction-to-dependency-mechanism.html

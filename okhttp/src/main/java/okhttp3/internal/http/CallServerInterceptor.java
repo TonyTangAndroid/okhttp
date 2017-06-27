@@ -21,6 +21,7 @@ import okhttp3.Interceptor;
 import okhttp3.Request;
 import okhttp3.Response;
 import okhttp3.internal.Util;
+import okhttp3.internal.connection.RealConnection;
 import okhttp3.internal.connection.StreamAllocation;
 import okio.BufferedSink;
 import okio.Okio;
@@ -35,23 +36,46 @@ public final class CallServerInterceptor implements Interceptor {
   }
 
   @Override public Response intercept(Chain chain) throws IOException {
-    HttpCodec httpCodec = ((RealInterceptorChain) chain).httpStream();
-    StreamAllocation streamAllocation = ((RealInterceptorChain) chain).streamAllocation();
-    Request request = chain.request();
+    RealInterceptorChain realChain = (RealInterceptorChain) chain;
+    HttpCodec httpCodec = realChain.httpStream();
+    StreamAllocation streamAllocation = realChain.streamAllocation();
+    RealConnection connection = (RealConnection) realChain.connection();
+    Request request = realChain.request();
 
     long sentRequestMillis = System.currentTimeMillis();
     httpCodec.writeRequestHeaders(request);
 
+    Response.Builder responseBuilder = null;
     if (HttpMethod.permitsRequestBody(request.method()) && request.body() != null) {
-      Sink requestBodyOut = httpCodec.createRequestBody(request, request.body().contentLength());
-      BufferedSink bufferedRequestBody = Okio.buffer(requestBodyOut);
-      request.body().writeTo(bufferedRequestBody);
-      bufferedRequestBody.close();
+      // If there's a "Expect: 100-continue" header on the request, wait for a "HTTP/1.1 100
+      // Continue" response before transmitting the request body. If we don't get that, return what
+      // we did get (such as a 4xx response) without ever transmitting the request body.
+      if ("100-continue".equalsIgnoreCase(request.header("Expect"))) {
+        httpCodec.flushRequest();
+        responseBuilder = httpCodec.readResponseHeaders(true);
+      }
+
+      if (responseBuilder == null) {
+        // Write the request body if the "Expect: 100-continue" expectation was met.
+        Sink requestBodyOut = httpCodec.createRequestBody(request, request.body().contentLength());
+        BufferedSink bufferedRequestBody = Okio.buffer(requestBodyOut);
+        request.body().writeTo(bufferedRequestBody);
+        bufferedRequestBody.close();
+      } else if (!connection.isMultiplexed()) {
+        // If the "Expect: 100-continue" expectation wasn't met, prevent the HTTP/1 connection from
+        // being reused. Otherwise we're still obligated to transmit the request body to leave the
+        // connection in a consistent state.
+        streamAllocation.noNewStreams();
+      }
     }
 
     httpCodec.finishRequest();
 
-    Response response = httpCodec.readResponseHeaders()
+    if (responseBuilder == null) {
+      responseBuilder = httpCodec.readResponseHeaders(false);
+    }
+
+    Response response = responseBuilder
         .request(request)
         .handshake(streamAllocation.connection().handshake())
         .sentRequestAtMillis(sentRequestMillis)

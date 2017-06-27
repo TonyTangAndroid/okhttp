@@ -34,7 +34,7 @@ class JdkWithJettyBootPlatform extends Platform {
   private final Class<?> clientProviderClass;
   private final Class<?> serverProviderClass;
 
-  public JdkWithJettyBootPlatform(Method putMethod, Method getMethod, Method removeMethod,
+  JdkWithJettyBootPlatform(Method putMethod, Method getMethod, Method removeMethod,
       Class<?> clientProviderClass, Class<?> serverProviderClass) {
     this.putMethod = putMethod;
     this.getMethod = getMethod;
@@ -106,11 +106,11 @@ class JdkWithJettyBootPlatform extends Platform {
     /** This peer's supported protocols. */
     private final List<String> protocols;
     /** Set when remote peer notifies ALPN is unsupported. */
-    private boolean unsupported;
+    boolean unsupported;
     /** The protocol the server selected. */
-    private String selected;
+    String selected;
 
-    public JettyNegoProvider(List<String> protocols) {
+    JettyNegoProvider(List<String> protocols) {
       this.protocols = protocols;
     }
 

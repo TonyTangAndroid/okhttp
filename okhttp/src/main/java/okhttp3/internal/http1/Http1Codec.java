@@ -55,7 +55,7 @@ import static okhttp3.internal.http.StatusLine.HTTP_CONTINUE;
  *     <li>Open a sink to write the request body. Either {@linkplain #newFixedLengthSink
  *         fixed-length} or {@link #newChunkedSink chunked}.
  *     <li>Write to and then close that sink.
- *     <li>{@linkplain #readResponse Read response headers}.
+ *     <li>{@linkplain #readResponseHeaders Read response headers}.
  *     <li>Open a source to read the response body. Either {@linkplain #newFixedLengthSource
  *         fixed-length}, {@linkplain #newChunkedSource chunked} or {@linkplain
  *         #newUnknownLengthSource unknown length}.
@@ -76,13 +76,13 @@ public final class Http1Codec implements HttpCodec {
   private static final int STATE_CLOSED = 6;
 
   /** The client that configures this stream. May be null for HTTPS proxy tunnels. */
-  private final OkHttpClient client;
+  final OkHttpClient client;
   /** The stream allocation that owns this stream. May be null for HTTPS proxy tunnels. */
-  private final StreamAllocation streamAllocation;
+  final StreamAllocation streamAllocation;
 
-  private final BufferedSource source;
-  private final BufferedSink sink;
-  private int state = STATE_IDLE;
+  final BufferedSource source;
+  final BufferedSink sink;
+  int state = STATE_IDLE;
 
   public Http1Codec(OkHttpClient client, StreamAllocation streamAllocation, BufferedSource source,
       BufferedSink sink) {
@@ -128,10 +128,6 @@ public final class Http1Codec implements HttpCodec {
     writeRequest(request.headers(), requestLine);
   }
 
-  @Override public Response.Builder readResponseHeaders() throws IOException {
-    return readResponse();
-  }
-
   @Override public ResponseBody openResponseBody(Response response) throws IOException {
     Source source = getTransferStream(response);
     return new RealResponseBody(response.headers(), Okio.buffer(source));
@@ -162,6 +158,10 @@ public final class Http1Codec implements HttpCodec {
     return state == STATE_CLOSED;
   }
 
+  @Override public void flushRequest() throws IOException {
+    sink.flush();
+  }
+
   @Override public void finishRequest() throws IOException {
     sink.flush();
   }
@@ -180,27 +180,26 @@ public final class Http1Codec implements HttpCodec {
     state = STATE_OPEN_REQUEST_BODY;
   }
 
-  /** Parses bytes of a response header from an HTTP transport. */
-  public Response.Builder readResponse() throws IOException {
+  @Override public Response.Builder readResponseHeaders(boolean expectContinue) throws IOException {
     if (state != STATE_OPEN_REQUEST_BODY && state != STATE_READ_RESPONSE_HEADERS) {
       throw new IllegalStateException("state: " + state);
     }
 
     try {
-      while (true) {
-        StatusLine statusLine = StatusLine.parse(source.readUtf8LineStrict());
+      StatusLine statusLine = StatusLine.parse(source.readUtf8LineStrict());
 
-        Response.Builder responseBuilder = new Response.Builder()
-            .protocol(statusLine.protocol)
-            .code(statusLine.code)
-            .message(statusLine.message)
-            .headers(readHeaders());
+      Response.Builder responseBuilder = new Response.Builder()
+          .protocol(statusLine.protocol)
+          .code(statusLine.code)
+          .message(statusLine.message)
+          .headers(readHeaders());
 
-        if (statusLine.code != HTTP_CONTINUE) {
-          state = STATE_OPEN_RESPONSE_BODY;
-          return responseBuilder;
-        }
+      if (expectContinue && statusLine.code == HTTP_CONTINUE) {
+        return null;
       }
+
+      state = STATE_OPEN_RESPONSE_BODY;
+      return responseBuilder;
     } catch (EOFException e) {
       // Provide more context if the server ends the stream before sending a response.
       IOException exception = new IOException("unexpected end of stream on " + streamAllocation);
@@ -256,7 +255,7 @@ public final class Http1Codec implements HttpCodec {
    * to the default configuration. Use this to avoid unexpected sharing of timeouts between pooled
    * connections.
    */
-  private void detachTimeout(ForwardingTimeout timeout) {
+  void detachTimeout(ForwardingTimeout timeout) {
     Timeout oldDelegate = timeout.delegate();
     timeout.setDelegate(Timeout.NONE);
     oldDelegate.clearDeadline();
@@ -269,7 +268,7 @@ public final class Http1Codec implements HttpCodec {
     private boolean closed;
     private long bytesRemaining;
 
-    private FixedLengthSink(long bytesRemaining) {
+    FixedLengthSink(long bytesRemaining) {
       this.bytesRemaining = bytesRemaining;
     }
 
@@ -309,6 +308,9 @@ public final class Http1Codec implements HttpCodec {
   private final class ChunkedSink implements Sink {
     private final ForwardingTimeout timeout = new ForwardingTimeout(sink.timeout());
     private boolean closed;
+
+    ChunkedSink() {
+    }
 
     @Override public Timeout timeout() {
       return timeout;
@@ -367,7 +369,7 @@ public final class Http1Codec implements HttpCodec {
   private class FixedLengthSource extends AbstractSource {
     private long bytesRemaining;
 
-    public FixedLengthSource(long length) throws IOException {
+    FixedLengthSource(long length) throws IOException {
       bytesRemaining = length;
       if (bytesRemaining == 0) {
         endOfInput(true);
@@ -467,6 +469,9 @@ public final class Http1Codec implements HttpCodec {
   /** An HTTP message body terminated by the end of the underlying stream. */
   private class UnknownLengthSource extends AbstractSource {
     private boolean inputExhausted;
+
+    UnknownLengthSource() {
+    }
 
     @Override public long read(Buffer sink, long byteCount)
         throws IOException {

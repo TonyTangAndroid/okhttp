@@ -16,11 +16,12 @@
 package okhttp3.internal.ws;
 
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
-import okhttp3.WebSocket;
 import okhttp3.Response;
+import okhttp3.WebSocket;
 import okhttp3.WebSocketListener;
 import okhttp3.internal.Util;
 import okhttp3.internal.platform.Platform;
@@ -136,9 +137,9 @@ public final class WebSocketRecorder extends WebSocketListener {
     assertEquals(new Message(payload), actual);
   }
 
-  public void assertBinaryMessage(byte[] payload) {
+  public void assertBinaryMessage(ByteString payload) {
     Object actual = nextEvent();
-    assertEquals(new Message(ByteString.of(payload)), actual);
+    assertEquals(new Message(payload), actual);
   }
 
   public void assertPing(ByteString payload) {
@@ -183,7 +184,7 @@ public final class WebSocketRecorder extends WebSocketListener {
     assertSame(t, failure.t);
   }
 
-  public void assertFailure(Class<? extends IOException> cls, String message) {
+  public void assertFailure(Class<? extends IOException> cls, String... messages) {
     Object event = nextEvent();
     if (!(event instanceof Failure)) {
       throw new AssertionError("Expected Failure but was " + event);
@@ -191,7 +192,16 @@ public final class WebSocketRecorder extends WebSocketListener {
     Failure failure = (Failure) event;
     assertNull(failure.response);
     assertEquals(cls, failure.t.getClass());
-    assertEquals(message, failure.t.getMessage());
+    if (messages.length > 0) {
+      assertTrue(failure.t.getMessage(), Arrays.asList(messages).contains(failure.t.getMessage()));
+    }
+  }
+
+  public void assertFailure() {
+    Object event = nextEvent();
+    if (!(event instanceof Failure)) {
+      throw new AssertionError("Expected Failure but was " + event);
+    }
   }
 
   public void assertFailure(int code, String body, Class<? extends IOException> cls, String message)
