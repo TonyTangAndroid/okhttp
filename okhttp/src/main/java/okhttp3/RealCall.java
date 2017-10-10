@@ -71,11 +71,15 @@ final class RealCall implements Call {
       executed = true;
     }
     captureCallStackTrace();
+    eventListener.callStart(this);
     try {
       client.dispatcher().executed(this);
       Response result = getResponseWithInterceptorChain();
       if (result == null) throw new IOException("Canceled");
       return result;
+    } catch (IOException e) {
+      eventListener.callFailed(this, e);
+      throw e;
     } finally {
       client.dispatcher().finished(this);
     }
@@ -92,6 +96,7 @@ final class RealCall implements Call {
       executed = true;
     }
     captureCallStackTrace();
+    eventListener.callStart(this);
     client.dispatcher().enqueue(new AsyncCall(responseCallback));
   }
 
@@ -152,6 +157,7 @@ final class RealCall implements Call {
           // Do not signal the callback twice!
           Platform.get().log(INFO, "Callback failure for " + toLoggableString(), e);
         } else {
+          eventListener.callFailed(RealCall.this, e);
           responseCallback.onFailure(RealCall.this, e);
         }
       } finally {
@@ -187,8 +193,10 @@ final class RealCall implements Call {
     }
     interceptors.add(new CallServerInterceptor(forWebSocket));
 
-    Interceptor.Chain chain = new RealInterceptorChain(
-        interceptors, null, null, null, 0, originalRequest, this, eventListener);
+    Interceptor.Chain chain = new RealInterceptorChain(interceptors, null, null, null, 0,
+        originalRequest, this, eventListener, client.connectTimeoutMillis(),
+        client.readTimeoutMillis(), client.writeTimeoutMillis());
+
     return chain.proceed(originalRequest);
   }
 }
